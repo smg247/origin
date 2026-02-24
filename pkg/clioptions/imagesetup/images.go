@@ -81,20 +81,23 @@ func VerifyManifestLists(sourceImages []string, allowedExceptions []string) erro
 			return fmt.Errorf("failed to get image info for %s: %w", img, err)
 		}
 
-		logrus.Debugf("  Found %d architecture(s)", len(availableArchs))
-
-		var missingArchs []string
-		availableSet := sets.NewString(availableArchs...)
-		for _, required := range requiredArchs {
-			if !availableSet.Has(required) {
-				missingArchs = append(missingArchs, required)
+		if len(availableArchs) == 0 {
+			problematicImages = append(problematicImages, fmt.Sprintf("%s: is not a manifest list", img))
+		} else {
+			logrus.Debugf("  Found %d architecture(s)", len(availableArchs))
+			var missingArchs []string
+			availableSet := sets.NewString(availableArchs...)
+			for _, required := range requiredArchs {
+				if !availableSet.Has(required) {
+					missingArchs = append(missingArchs, required)
+				}
 			}
-		}
 
-		if len(missingArchs) > 0 {
-			problematicImages = append(problematicImages,
-				fmt.Sprintf("%s: missing architectures: %s (has: %s)",
-					img, strings.Join(missingArchs, ", "), strings.Join(availableArchs, ", ")))
+			if len(missingArchs) > 0 {
+				problematicImages = append(problematicImages,
+					fmt.Sprintf("%s: missing architectures: %s (has: %s)",
+						img, strings.Join(missingArchs, ", "), strings.Join(availableArchs, ", ")))
+			}
 		}
 	}
 
@@ -121,20 +124,37 @@ func isImageExcepted(image string, exceptions []string) bool {
 	return false
 }
 
-// getArchitectures retrieves image information using 'oc image info' with --filter-by-os
-// to check which architectures are available for the image. Returns a list of available architectures.
-// Retries up to 3 times per architecture to handle transient failures.
+// getArchitectures retrieves the list of available architectures for an image.
+// First checks if the image is a manifest list, then checks each architecture using --filter-by-os.
+// Retries up to 3 times per check to handle transient failures.
 func getArchitectures(image string, requiredArchs []string) ([]string, error) {
-	var availableArchs []string
 	const maxRetries = 3
 
+	// First, check if this is a manifest list
+	cmd := exec.Command("oc", "image", "info", image)
+	output, err := cmd.CombinedOutput()
+
+	// This seems a bit brittle, but the output when the image is a manifest-list isn't able to be formatted as JSON,
+	// and there isn't much else to go off of to tell if it's a manifest list or not.
+	if err != nil && strings.Contains(string(output), "the image is a manifest list") {
+		logrus.Debugf("  Image is a manifest list")
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to check image %s: %w\nOutput: %s", image, err, string(output))
+	} else {
+		logrus.Debugf("  Image is NOT a manifest list")
+		return nil, nil
+	}
+
+	// For manifest lists, check each required architecture using --filter-by-os
+	// We can trust the exit code since we've verified it's a manifest list
+	var availableArchs []string
 	for _, arch := range requiredArchs {
 		logrus.Debugf("    Checking architecture: %s", arch)
 
 		found := false
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			cmd := exec.Command("oc", "image", "info", image,
-				fmt.Sprintf("--filter-by-os=linux/%s", arch), "--output=json")
+				fmt.Sprintf("--filter-by-os=linux/%s", arch))
 			err := cmd.Run()
 
 			if err == nil {

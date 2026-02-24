@@ -80,10 +80,19 @@ var exceptions = []func(pod corev1.Pod) (string, bool){
 	exceptionWithJira("openshift-cnv/kubevirt-apiserver-proxy-", "https://issues.redhat.com/browse/OCPBUGS-70353"),
 	exceptionWithJira("openshift-cnv/kubevirt-console-plugin-", "https://issues.redhat.com/browse/OCPBUGS-70353"),
 	exceptionWithJira("kube-system/global-pull-secret-syncer-", "https://issues.redhat.com/browse/OCPBUGS-70354"),
+
 	// Handle the outlier (Namespace only check) manually
 	func(pod corev1.Pod) (string, bool) {
 		if pod.Namespace == "openshift-cluster-csi-drivers" {
 			return "https://issues.redhat.com/browse/OCPBUGS-70355", true
+		}
+		return "", false
+	},
+	// Handle the outlier (Namespace only check) manually
+	// This one might be simplified to check if it is a debug pod or not.
+	func(pod corev1.Pod) (string, bool) {
+		if pod.Namespace == "openshift-commatrix-test" && strings.Contains(pod.Name, "debug") {
+			return "https://issues.redhat.com/browse/OCPBUGS-77201", true
 		}
 		return "", false
 	},

@@ -41,9 +41,15 @@ const (
 	CLIPrivilegeAdmin         = true                                    // Admin CLI with cluster-admin permissions
 	KubeletPort               = "10250"                                 // Kubelet API port
 
-	// Common timeouts used across TNF tests
+	// Wait for cluster health after recovery/reboot (e.g. node replacement).
 	clusterIsHealthyTimeout = 15 * time.Minute
-	debugContainerTimeout   = 60 * time.Second
+
+	// Precondition timeouts for SkipIfClusterIsNotHealthy.
+	preconditionClusterHealthyTimeout = 5 * time.Minute // nodes + cluster operators
+	preconditionEtcdHealthyTimeout    = 1 * time.Minute // etcd pods running, two voting members
+
+	// Max time for a single debug pod exec.
+	debugContainerTimeout = 60 * time.Second
 
 	// Common poll intervals used across TNF tests
 	FiveSecondPollInterval   = 5 * time.Second  // Default poll interval for most operations
@@ -147,19 +153,19 @@ func SkipIfClusterIsNotHealthy(oc *exutil.CLI, ecf *helpers.EtcdClientFactoryImp
 		skipReasons = append(skipReasons, fmt.Sprintf("expected 2 nodes for two-node cluster, found %d", len(nodes.Items)))
 	}
 
-	if err := IsClusterHealthyWithTimeout(oc, clusterIsHealthyTimeout); err != nil {
+	if err := IsClusterHealthyWithTimeout(oc, preconditionClusterHealthyTimeout); err != nil {
 		skipReasons = append(skipReasons, fmt.Sprintf("cluster-wide health failed: %v", err))
 	}
-	if err := ensureEtcdPodsAreRunning(oc); err != nil {
+	if err := ensureEtcdPodsAreRunning(oc, preconditionEtcdHealthyTimeout); err != nil {
 		skipReasons = append(skipReasons, fmt.Sprintf("etcd pods not running: %v", err))
 	}
 	// Only check etcd members if we successfully retrieved nodes
 	if nodes != nil && len(nodes.Items) == 2 {
-		if err := ensureEtcdHasTwoVotingMembers(nodes, ecf); err != nil {
+		if err := ensureEtcdHasTwoVotingMembers(nodes, ecf, preconditionEtcdHealthyTimeout); err != nil {
 			skipReasons = append(skipReasons, fmt.Sprintf("etcd doesn't have two voting members: %v", err))
 		}
 	}
-	if err := ensureClusterOperatorHealthy(oc); err != nil {
+	if err := ensureClusterOperatorHealthy(oc, preconditionClusterHealthyTimeout); err != nil {
 		skipReasons = append(skipReasons, fmt.Sprintf("cluster-etcd-operator not healthy: %v", err))
 	}
 
@@ -1138,10 +1144,10 @@ func GetMemberState(node *corev1.Node, members []*etcdserverpb.Member) (started,
 	return started, learner, nil
 }
 
-// ensureClusterOperatorHealthy checks if the cluster-etcd-operator is healthy before running etcd tests
-func ensureClusterOperatorHealthy(oc *exutil.CLI) error {
-	framework.Logf("Ensure cluster-etcd-operator is healthy (timeout: %v)", clusterIsHealthyTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), clusterIsHealthyTimeout)
+// ensureClusterOperatorHealthy checks if the cluster-etcd-operator is healthy. timeout is the maximum wait.
+func ensureClusterOperatorHealthy(oc *exutil.CLI, timeout time.Duration) error {
+	framework.Logf("Ensure cluster-etcd-operator is healthy (timeout: %v)", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	for {
@@ -1176,9 +1182,10 @@ func ensureClusterOperatorHealthy(oc *exutil.CLI) error {
 	}
 }
 
-func ensureEtcdPodsAreRunning(oc *exutil.CLI) error {
-	framework.Logf("Ensure Etcd pods are running (timeout: %v)", clusterIsHealthyTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), clusterIsHealthyTimeout)
+// ensureEtcdPodsAreRunning waits for etcd pods to be running. timeout is the maximum wait.
+func ensureEtcdPodsAreRunning(oc *exutil.CLI, timeout time.Duration) error {
+	framework.Logf("Ensure Etcd pods are running (timeout: %v)", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	for {
 		etcdPods, err := oc.AdminKubeClient().CoreV1().Pods("openshift-etcd").List(context.Background(), metav1.ListOptions{
@@ -1220,9 +1227,10 @@ func findClusterOperatorCondition(conditions []v1.ClusterOperatorStatusCondition
 	return nil
 }
 
-func ensureEtcdHasTwoVotingMembers(nodes *corev1.NodeList, ecf *helpers.EtcdClientFactoryImpl) error {
-	framework.Logf("Ensure Etcd member list has two voting members (timeout: %v)", clusterIsHealthyTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), clusterIsHealthyTimeout)
+// ensureEtcdHasTwoVotingMembers waits for etcd to have two voting members. timeout is the maximum wait.
+func ensureEtcdHasTwoVotingMembers(nodes *corev1.NodeList, ecf *helpers.EtcdClientFactoryImpl, timeout time.Duration) error {
+	framework.Logf("Ensure Etcd member list has two voting members (timeout: %v)", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	for {

@@ -874,7 +874,11 @@ var _ = g.Describe("[sig-instrumentation] Prometheus [apigroup:image.openshift.i
 
 			tests := map[string]bool{
 				// openshift-e2e-loki alerts should never fail this test, we've seen this happen on daemon set rollout stuck when CI loki was down.
-				fmt.Sprintf(`ALERTS{alertname!~"%s",alertstate="firing",severity!="info",namespace!="openshift-e2e-loki"} >= 1`, strings.Join(allowedAlertNames, "|")): false,
+				//
+				// CCXDEV-16087 / OCPBUGS-77314: Insights call API that fails with 504 due to load
+				// The unless clause excludes KubeJobFailed alerts from periodic-gathering jobs in openshift-insights
+				// TODO: Revert (or remove the unless clause) once CCXDEV-16087 / OCPBUGS-77314 is addressed
+				fmt.Sprintf(`(ALERTS{alertname!~"%s",alertstate="firing",severity!="info",namespace!="openshift-e2e-loki"} unless ALERTS{alertname="KubeJobFailed",alertstate="firing",namespace="openshift-insights",job_name=~"periodic-gathering-.*"}) >= 1`, strings.Join(allowedAlertNames, "|")): false,
 			}
 			err = helper.RunQueries(context.TODO(), oc.NewPrometheusClient(context.TODO()), tests, oc)
 			o.Expect(err).NotTo(o.HaveOccurred())

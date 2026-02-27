@@ -64,7 +64,7 @@ var (
 		"quay.io/olmtest/webhook-operator:v0.0.5": -1,
 
 		// used by zstd:chunked image tests
-		"quay.io/crio/zstd-chunked:1": -1,
+		"quay.io/crio/zstd-chunked:2": -1,
 	}
 )
 

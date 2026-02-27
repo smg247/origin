@@ -35,7 +35,7 @@ var _ = g.Describe("[sig-node] zstd:chunked Image", func() {
 				Containers: []corev1.Container{
 					{
 						Name:    "zstd-chunked-container",
-						Image:   image.LocationFor("quay.io/crio/zstd-chunked:1"),
+						Image:   image.LocationFor("quay.io/crio/zstd-chunked:2"),
 						Command: []string{"date"},
 					},
 				},

@@ -415,7 +415,7 @@ func (c *CLI) setupProject() string {
 	imageRegistryEnabled, err := IsCapabilityEnabled(c, configv1.ClusterVersionCapabilityImageRegistry)
 	o.Expect(err).NotTo(o.HaveOccurred())
 	if imageRegistryEnabled {
-		out, err := c.AsAdmin().Run("get").Args("configs.imageregistry.operator.openshift.io", "cluster", "-o", "jsonpath={.spec.managementState}").Output()
+		out, _, err := c.AsAdmin().Run("get").Args("configs.imageregistry.operator.openshift.io", "cluster", "-o", "jsonpath={.spec.managementState}").Outputs()
 		if err != nil {
 			framework.Logf("Error checking image registry management state: %v", err)
 		} else if out == "Removed" {

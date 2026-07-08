@@ -112,3 +112,9 @@ test: test-tools
 # It will generate targets {update,verify}-bindata-$(1) logically grouping them in unsuffixed versions of these targets
 # and also hooked into {update,verify}-generated for broader integration.
 $(call add-bindata,bindata,-ignore ".*\.(go|md)$$$$" examples/db-templates examples/image-streams examples/sample-app examples/quickstarts/... examples/hello-openshift examples/jenkins/... examples/quickstarts/cakephp-mysql.json test/extended/testdata/... e2echart,testextended,testdata,test/extended/testdata/bindata.go)
+
+# Requires uv (installed in devcontainer). Regenerates CLAUDE.md, AGENTS.md, etc.
+apm:
+	uvx --from apm-cli@0.13.0 apm install
+	uvx --from apm-cli@0.13.0 apm compile
+.PHONY: apm

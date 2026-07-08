@@ -20,9 +20,9 @@ container startup.
    ```bash
    devcontainer up --workspace-folder . --docker-path podman
    ```
-6. Exec in and run the post-create script:
+6. Exec in:
    ```bash
-   podman exec -it -u vscode -w /workspace origin-dev bash .devcontainer/post-create.sh
+   podman exec -it -u vscode -w /workspace origin-dev bash
    ```
 
 ## Prerequisites

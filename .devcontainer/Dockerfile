@@ -29,6 +29,7 @@ RUN ARCH=$(uname -m) && \
     mv "/tmp/gh_${GH_VERSION}_linux_${GO_ARCH}/bin/gh" /usr/local/bin/gh && \
     chmod +x /usr/local/bin/gh
 
+# Dev-only container: passwordless sudo for tooling installs
 RUN groupadd -g 1000 vscode && \
     useradd -u 1000 -g 0 -G 1000 -m -s /bin/bash vscode && \
     echo "vscode ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/vscode && \

@@ -20,7 +20,7 @@ echo "==> Building openshift-tests..."
 make build
 
 if [ -n "${HOST_WORKSPACE_FOLDER:-}" ]; then
-  host_project_dir=$(echo "$HOST_WORKSPACE_FOLDER" | sed 's|/|-|g')
+  host_project_dir="${HOST_WORKSPACE_FOLDER//\//-}"
   claude_projects="$HOME/.claude/projects"
   if [ -d "$claude_projects/$host_project_dir" ] && [ ! -e "$claude_projects/-workspace" ]; then
     ln -s "$claude_projects/$host_project_dir" "$claude_projects/-workspace"

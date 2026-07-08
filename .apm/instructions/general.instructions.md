@@ -30,7 +30,7 @@ Sources under **`.apm/`** (instructions, prompts, `apm.yml`, etc.) drive generat
 * **`pkg/monitortestlibrary/`** — shared monitor utilities (allowed disruption baselines, alert allowlists, platform identification).
 * **`pkg/disruption/`** — disruption measurement framework (HTTP/gRPC sampling, transport hooks, shutdown detection).
 * **`pkg/test/extensions/`** — OTE extension binary extraction, execution, and admission control.
-* **`vendor/`** — vendored dependencies. Run `go mod vendor` after changing `go.mod`.
+* **`vendor/`** — vendored dependencies. Run `go mod tidy && go mod vendor` after changing `go.mod` to keep `go.sum` and `vendor/` in sync.
 
 ### E2e tests
 

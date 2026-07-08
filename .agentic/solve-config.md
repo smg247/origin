@@ -6,4 +6,4 @@
 
 ## Environment
 
-- Dependencies are vendored. Run `go mod vendor` after changing `go.mod`.
+- Dependencies are vendored. Run `go mod tidy && go mod vendor` after changing `go.mod`.

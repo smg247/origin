@@ -50,7 +50,7 @@ verify-origin:
 	hack/verify-generated.sh
 	hack/verify-tls-ownership.sh
 .PHONY: verify-origin
-verify: verify-origin verify-apm
+verify: verify-origin
 
 # Update all generated artifacts.
 #

@@ -50,7 +50,7 @@ verify-origin:
 	hack/verify-generated.sh
 	hack/verify-tls-ownership.sh
 .PHONY: verify-origin
-verify: verify-origin
+verify: verify-origin verify-apm
 
 # Update all generated artifacts.
 #
@@ -118,3 +118,11 @@ apm:
 	uvx --from apm-cli@0.13.0 apm install
 	uvx --from apm-cli@0.13.0 apm compile
 .PHONY: apm
+
+verify-apm: apm
+	@if ! git diff --quiet HEAD -- .claude .cursor .gemini .opencode .github/instructions .github/prompts AGENTS.md CLAUDE.md GEMINI.md; then \
+		echo "ERROR: Generated APM files are out of date. Run 'make apm' and commit the results."; \
+		git diff --stat HEAD -- .claude .cursor .gemini .opencode .github/instructions .github/prompts AGENTS.md CLAUDE.md GEMINI.md; \
+		exit 1; \
+	fi
+.PHONY: verify-apm

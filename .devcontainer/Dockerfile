@@ -49,6 +49,6 @@ RUN cp /usr/bin/base64 /usr/bin/base64.gnu && \
 
 USER vscode
 
-RUN go install gotest.tools/gotestsum@latest
+RUN go install gotest.tools/gotestsum@v1.13.0
 
 WORKDIR /workspace

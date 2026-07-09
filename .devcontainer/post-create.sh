@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -euo pipefail
 
 echo "==> Installing Go IDE tools..."
 go install golang.org/x/tools/gopls@v0.21.1

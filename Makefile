@@ -114,7 +114,7 @@ test: test-tools
 $(call add-bindata,bindata,-ignore ".*\.(go|md)$$$$" examples/db-templates examples/image-streams examples/sample-app examples/quickstarts/... examples/hello-openshift examples/jenkins/... examples/quickstarts/cakephp-mysql.json test/extended/testdata/... e2echart,testextended,testdata,test/extended/testdata/bindata.go)
 
 # Requires uv (installed in devcontainer). Regenerates CLAUDE.md, AGENTS.md, etc.
-_uvx_env = $(if $(filter true,$(CI)),UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools)
+_uvx_env = $(if $(filter true,$(CI)),UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools UV_PYTHON=python3.12)
 apm:
 	$(_uvx_env) uvx --from apm-cli@0.13.0 apm install
 	$(_uvx_env) uvx --from apm-cli@0.13.0 apm compile

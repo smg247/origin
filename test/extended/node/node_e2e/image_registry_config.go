@@ -79,7 +79,7 @@ var _ = g.Describe("[Suite:openshift/disruptive-longrunning][sig-node][Disruptiv
 			}
 			imageConfig.Spec.RegistrySources.AllowedRegistries = []string{
 				"registry.access.redhat.com", "docker.io", "quay.io", searchRegistry,
-				"image-registry.openshift-image-registry.svc:5000", "quay-proxy.ci.openshift.org",
+				"image-registry.openshift-image-registry.svc:5000", "quay-proxy.ci.openshift.org", "registry.redhat.io",
 			}
 			imageConfig.Spec.RegistrySources.ContainerRuntimeSearchRegistries = []string{
 				"registry.access.redhat.com", "docker.io", "quay.io", searchRegistry,

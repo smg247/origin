@@ -19,8 +19,10 @@ import (
 	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 	"k8s.io/kubernetes/test/e2e/framework"
 
+	g "github.com/onsi/ginkgo/v2"
 	o "github.com/onsi/gomega"
 
+	configv1 "github.com/openshift/api/config/v1"
 	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 	machineconfigclient "github.com/openshift/client-go/machineconfiguration/clientset/versioned"
 	exutil "github.com/openshift/origin/test/extended/util"
@@ -902,4 +904,44 @@ func CheckNetNsCleaned(oc *exutil.CLI, nodeName, netNsPath string) error {
 	}
 	// No error means file still exists
 	return fmt.Errorf("NetNS file still exists at %s", netNsPath)
+}
+
+func skipUnlessAdditionalStorageConfigEnabled(ctx context.Context, oc *exutil.CLI) {
+	// Skip on MicroShift - MachineConfig resources are not available
+	isMicroShift, err := exutil.IsMicroShiftCluster(oc.AdminKubeClient())
+	if err != nil {
+		framework.Logf("Failed to detect MicroShift cluster: %v", err)
+		g.Skip("Cannot verify cluster type")
+	}
+	if isMicroShift {
+		g.Skip("Skipping test on MicroShift cluster - MachineConfig resources are not available")
+	}
+
+	// Skip on Microsoft
+	infra, err := oc.AdminConfigClient().ConfigV1().Infrastructures().Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		framework.Logf("Failed to get Infrastructure resource: %v", err)
+		g.Skip("Cannot verify platform type")
+	}
+	if infra.Status.PlatformStatus != nil && infra.Status.PlatformStatus.Type == configv1.AzurePlatformType {
+		g.Skip("Skipping test on Microsoft Azure cluster")
+	}
+
+	// Verify AdditionalStorageConfig feature gate is enabled
+	g.By("Verifying AdditionalStorageConfig feature gate is enabled")
+	fgs, err := oc.AdminConfigClient().ConfigV1().FeatureGates().Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		framework.Logf("Failed to get FeatureGate resource: %v", err)
+		g.Skip("Cannot verify AdditionalStorageConfig feature gate requirement")
+	}
+
+	for _, fg := range fgs.Status.FeatureGates {
+		for _, enabledFG := range fg.Enabled {
+			if enabledFG.Name == "AdditionalStorageConfig" {
+				return // All prerequisites met, continue with test
+			}
+		}
+	}
+
+	g.Skip("Skipping test - AdditionalStorageConfig feature gate is not enabled")
 }

@@ -20,6 +20,7 @@ import (
 	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 	admissionapi "k8s.io/pod-security-admission/api"
 
+	nodeutils "github.com/openshift/origin/test/extended/node"
 	dracommon "github.com/openshift/origin/test/extended/node/dra/common"
 	exutil "github.com/openshift/origin/test/extended/util"
 	"github.com/openshift/origin/test/extended/util/image"
@@ -43,11 +44,7 @@ var _ = g.Describe("[sig-scheduling][Feature:DRA-Example][Suite:openshift/dra-ex
 	)
 
 	g.BeforeEach(func(ctx context.Context) {
-		isMicroShift, err := exutil.IsMicroShiftCluster(oc.AdminKubeClient())
-		o.Expect(err).NotTo(o.HaveOccurred())
-		if isMicroShift {
-			g.Skip("Skipping DRA example driver tests on MicroShift cluster")
-		}
+		nodeutils.SkipOnMicroShift(oc)
 
 		validator = NewDeviceValidator(oc.KubeFramework())
 		builder = dracommon.NewResourceBuilder(oc.Namespace(), dracommon.DriverConfig{

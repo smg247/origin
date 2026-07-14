@@ -8,13 +8,47 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	o "github.com/onsi/gomega"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/kubernetes/test/e2e/framework"
-
+	configv1 "github.com/openshift/api/config/v1"
 	machineconfigv1 "github.com/openshift/api/machineconfiguration/v1"
 	mcclient "github.com/openshift/client-go/machineconfiguration/clientset/versioned"
 	exutil "github.com/openshift/origin/test/extended/util"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/test/e2e/framework"
 )
+
+// IsAdditionalStorageConfigEnabled checks whether the AdditionalStorageConfig
+// feature gate is enabled on the cluster and the platform is supported.
+// Returns false with a reason string if the test should be skipped.
+func IsAdditionalStorageConfigEnabled(ctx context.Context, oc *exutil.CLI) (bool, string) {
+	isMicroShift, err := exutil.IsMicroShiftCluster(oc.AdminKubeClient())
+	if err != nil {
+		return false, fmt.Sprintf("cannot verify cluster type: %v", err)
+	}
+	if isMicroShift {
+		return false, "MicroShift cluster - MachineConfig resources are not available"
+	}
+
+	infra, err := oc.AdminConfigClient().ConfigV1().Infrastructures().Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Sprintf("cannot verify platform type: %v", err)
+	}
+	if infra.Status.PlatformStatus != nil && infra.Status.PlatformStatus.Type == configv1.AzurePlatformType {
+		return false, "Microsoft Azure cluster"
+	}
+
+	fgs, err := oc.AdminConfigClient().ConfigV1().FeatureGates().Get(ctx, "cluster", metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Sprintf("cannot verify FeatureGate: %v", err)
+	}
+	for _, fg := range fgs.Status.FeatureGates {
+		for _, enabledFG := range fg.Enabled {
+			if enabledFG.Name == "AdditionalStorageConfig" {
+				return true, ""
+			}
+		}
+	}
+	return false, "AdditionalStorageConfig feature gate is not enabled"
+}
 
 // API validation tests - use DryRun to avoid triggering MCO reconciliation
 var _ = g.Describe("[apigroup:config.openshift.io][apigroup:machineconfiguration.openshift.io][Jira:Node/CRI-O][sig-node][Feature:AdditionalStorageSupport][OCPFeatureGate:AdditionalStorageConfig][Suite:openshift/conformance/parallel] Additional Storage API Validation", func() {
@@ -23,7 +57,9 @@ var _ = g.Describe("[apigroup:config.openshift.io][apigroup:machineconfiguration
 	var oc = exutil.NewCLI("additional-storage-api")
 
 	g.BeforeEach(func(ctx context.Context) {
-		skipUnlessAdditionalStorageConfigEnabled(ctx, oc)
+		if enabled, reason := IsAdditionalStorageConfigEnabled(ctx, oc); !enabled {
+			g.Skip(reason)
+		}
 	})
 
 	// ========================================================================

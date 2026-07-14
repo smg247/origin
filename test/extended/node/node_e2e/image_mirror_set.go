@@ -31,7 +31,6 @@ import (
 // do not wait on the full worker and master pools.
 type mirrorTestPool struct {
 	oc        *exutil.CLI
-	ctx       context.Context
 	mcClient  *machineconfigclient.Clientset
 	PoolName  string
 	NodeName  string
@@ -47,6 +46,8 @@ func newMirrorTestPool(oc *exutil.CLI, ctx context.Context) *mirrorTestPool {
 
 	nodeName := nodeutils.GetFirstReadyWorkerNode(oc)
 	o.Expect(nodeName).NotTo(o.BeEmpty(), "no ready worker node found for custom MCP")
+	err = nodeutils.EnsureNodeHasNoCustomRole(ctx, oc, nodeName)
+	o.Expect(err).NotTo(o.HaveOccurred())
 
 	testMCP := &mcfgv1.MachineConfigPool{
 		ObjectMeta: metav1.ObjectMeta{
@@ -81,7 +82,6 @@ func newMirrorTestPool(oc *exutil.CLI, ctx context.Context) *mirrorTestPool {
 
 	pool := &mirrorTestPool{
 		oc:        oc,
-		ctx:       ctx,
 		mcClient:  mcClient,
 		PoolName:  poolName,
 		NodeName:  nodeName,
@@ -103,35 +103,46 @@ func (p *mirrorTestPool) waitForRollout(initialSpec string) {
 	imagepolicy.WaitForMCPConfigSpecChangeAndUpdated(p.oc, p.PoolName, initialSpec)
 }
 
-func (p *mirrorTestPool) readRegistriesConf() string {
-	registriesConf, err := nodeutils.ExecOnNodeWithChroot(p.oc, p.NodeName, "cat", "/etc/containers/registries.conf")
+func (p *mirrorTestPool) readRegistriesConf(ctx context.Context) string {
+	registriesConf, err := nodeutils.ExecOnNodeWithChroot(ctx, p.oc, p.NodeName, "cat", "/etc/containers/registries.conf")
 	o.Expect(err).NotTo(o.HaveOccurred(), "failed to read registries.conf from node %s", p.NodeName)
 	return registriesConf
 }
 
 func (p *mirrorTestPool) Teardown() {
+	ctx := context.Background()
+
 	e2e.Logf("Teardown: removing label %s from node %s", p.nodeLabel, p.NodeName)
 	removePatch := []byte(fmt.Sprintf(`{"metadata":{"labels":{%q:null}}}`, p.nodeLabel))
-	_, patchErr := p.oc.AdminKubeClient().CoreV1().Nodes().Patch(p.ctx, p.NodeName, types.MergePatchType, removePatch, metav1.PatchOptions{})
+	_, patchErr := p.oc.AdminKubeClient().CoreV1().Nodes().Patch(ctx, p.NodeName, types.MergePatchType, removePatch, metav1.PatchOptions{})
 	if patchErr != nil && !apierrors.IsNotFound(patchErr) {
 		e2e.Logf("Warning: failed to remove label from node %s: %v", p.NodeName, patchErr)
 	}
 
 	e2e.Logf("Teardown: waiting for node %s to transition back to worker pool", p.NodeName)
-	o.Eventually(func() bool {
-		currentNode, getErr := p.oc.AdminKubeClient().CoreV1().Nodes().Get(p.ctx, p.NodeName, metav1.GetOptions{})
+	waitErr := wait.PollUntilContextTimeout(ctx, 15*time.Second, 15*time.Minute, true, func(ctx context.Context) (bool, error) {
+		currentNode, getErr := p.oc.AdminKubeClient().CoreV1().Nodes().Get(ctx, p.NodeName, metav1.GetOptions{})
 		if getErr != nil {
-			return false
+			return false, nil
 		}
 		currentConfig := currentNode.Annotations["machineconfiguration.openshift.io/currentConfig"]
 		desiredConfig := currentNode.Annotations["machineconfiguration.openshift.io/desiredConfig"]
-		return currentConfig != "" && !strings.Contains(currentConfig, p.PoolName) && currentConfig == desiredConfig
-	}, 15*time.Minute, 15*time.Second).Should(o.BeTrue(),
-		"node %s should transition back to worker pool", p.NodeName)
+		return currentConfig != "" && !strings.Contains(currentConfig, p.PoolName) && currentConfig == desiredConfig, nil
+	})
+	if waitErr != nil {
+		e2e.Logf("Warning: node %s did not transition back to worker pool: %v", p.NodeName, waitErr)
+	}
 
-	deleteErr := p.mcClient.MachineconfigurationV1().MachineConfigPools().Delete(p.ctx, p.PoolName, metav1.DeleteOptions{})
+	deleteErr := p.mcClient.MachineconfigurationV1().MachineConfigPools().Delete(ctx, p.PoolName, metav1.DeleteOptions{})
 	if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 		e2e.Logf("Warning: failed to delete MachineConfigPool %s: %v", p.PoolName, deleteErr)
+	}
+
+	if deleteErr == nil || apierrors.IsNotFound(deleteErr) {
+		e2e.Logf("Teardown: waiting for worker MCP to stabilize")
+		if stabilizeErr := nodeutils.WaitForMCP(ctx, p.mcClient, "worker", 10*time.Minute); stabilizeErr != nil {
+			e2e.Logf("Warning: worker MCP did not stabilize: %v", stabilizeErr)
+		}
 	}
 }
 
@@ -194,19 +205,15 @@ func pollMCPSpecUnchanged(oc *exutil.CLI, pool, baselineSpec string, duration ti
 // author: asahay@redhat.com
 var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptive][Serial] ImageTagMirrorSet and ImageDigestMirrorSet", func() {
 	var (
-		oc  = exutil.NewCLIWithoutNamespace("image-mirror-set")
-		ctx = context.Background()
+		oc = exutil.NewCLIWithoutNamespace("image-mirror-set")
 	)
 
-	g.BeforeEach(func() {
-		isMicroShift, err := exutil.IsMicroShiftCluster(oc.AdminKubeClient())
-		o.Expect(err).NotTo(o.HaveOccurred())
-		if isMicroShift {
-			g.Skip("Skipping test on MicroShift cluster - MachineConfig resources are not available")
-		}
+	g.BeforeEach(func(ctx context.Context) {
+		nodeutils.SkipOnMicroShift(oc)
+		nodeutils.EnsureNodesReady(ctx, oc)
 	})
 
-	g.It("[OTP] Create ImageDigestMirrorSet and ImageTagMirrorSet and verify registries.conf [OCP-57401]", func() {
+	g.It("[OTP] Create ImageDigestMirrorSet and ImageTagMirrorSet and verify registries.conf [OCP-57401]", func(ctx context.Context) {
 		configClient := oc.AdminConfigClient().ConfigV1()
 		suffix := utilrand.String(5)
 		idmsName := fmt.Sprintf("digest-mirror-%s", suffix)
@@ -247,12 +254,14 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("ImageDigestMirrorSet %q created successfully", createdIDMS.Name)
 
 		g.DeferCleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
 			g.By("Cleanup: Delete IDMS and ITMS resources")
 			cleanupSpec := pool.currentSpec()
-			if delErr := configClient.ImageTagMirrorSets().Delete(ctx, itmsName, metav1.DeleteOptions{}); delErr != nil {
+			if delErr := configClient.ImageTagMirrorSets().Delete(cleanupCtx, itmsName, metav1.DeleteOptions{}); delErr != nil {
 				e2e.Logf("Warning: failed to delete ImageTagMirrorSet: %v", delErr)
 			}
-			if delErr := configClient.ImageDigestMirrorSets().Delete(ctx, idmsName, metav1.DeleteOptions{}); delErr != nil {
+			if delErr := configClient.ImageDigestMirrorSets().Delete(cleanupCtx, idmsName, metav1.DeleteOptions{}); delErr != nil {
 				e2e.Logf("Warning: failed to delete ImageDigestMirrorSet: %v", delErr)
 			}
 			pool.waitForRollout(cleanupSpec)
@@ -298,7 +307,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("Custom MCP %s finished rolling out after ITMS creation", pool.PoolName)
 
 		g.By("Step 4: Verify /etc/containers/registries.conf on the custom pool node")
-		registriesConf := pool.readRegistriesConf()
+		registriesConf := pool.readRegistriesConf(ctx)
 		e2e.Logf("registries.conf on %s: read %d bytes, asserting expected entries", pool.NodeName, len(registriesConf))
 
 		g.By("Verify IDMS entries (digest-only mirrors)")
@@ -329,7 +338,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 	})
 
 	// author: asahay@redhat.com
-	g.It("[OTP] ICSP and IDMS/ITMS can coexist in cluster [OCP-70203]", ote.Informing(), func() {
+	g.It("[OTP] ICSP and IDMS/ITMS can coexist in cluster [OCP-70203]", ote.Informing(), func(ctx context.Context) {
 		configClient := oc.AdminConfigClient().ConfigV1()
 		operatorClient := oc.AdminOperatorClient().OperatorV1alpha1()
 		suffix := utilrand.String(5)
@@ -373,13 +382,15 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("ICSP %s created successfully", icspName1)
 
 		g.DeferCleanup(func() {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
 			g.By("Cleanup: Delete any remaining test resources and wait for custom MCP to settle")
 			cleanupSpec := pool.currentSpec()
 			toDelete := false
 
 			for _, name := range []string{icspName1, icspName2} {
-				if _, getErr := operatorClient.ImageContentSourcePolicies().Get(ctx, name, metav1.GetOptions{}); getErr == nil {
-					if delErr := operatorClient.ImageContentSourcePolicies().Delete(ctx, name, metav1.DeleteOptions{}); delErr == nil {
+				if _, getErr := operatorClient.ImageContentSourcePolicies().Get(cleanupCtx, name, metav1.GetOptions{}); getErr == nil {
+					if delErr := operatorClient.ImageContentSourcePolicies().Delete(cleanupCtx, name, metav1.DeleteOptions{}); delErr == nil {
 						e2e.Logf("Cleanup: deleted ICSP %s", name)
 						toDelete = true
 					} else {
@@ -387,16 +398,16 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 					}
 				}
 			}
-			if _, getErr := configClient.ImageTagMirrorSets().Get(ctx, itmsName, metav1.GetOptions{}); getErr == nil {
-				if delErr := configClient.ImageTagMirrorSets().Delete(ctx, itmsName, metav1.DeleteOptions{}); delErr == nil {
+			if _, getErr := configClient.ImageTagMirrorSets().Get(cleanupCtx, itmsName, metav1.GetOptions{}); getErr == nil {
+				if delErr := configClient.ImageTagMirrorSets().Delete(cleanupCtx, itmsName, metav1.DeleteOptions{}); delErr == nil {
 					e2e.Logf("Cleanup: deleted ITMS %s", itmsName)
 					toDelete = true
 				} else {
 					e2e.Logf("Cleanup: warning - failed to delete ITMS %s: %v", itmsName, delErr)
 				}
 			}
-			if _, getErr := configClient.ImageDigestMirrorSets().Get(ctx, idmsName, metav1.GetOptions{}); getErr == nil {
-				if delErr := configClient.ImageDigestMirrorSets().Delete(ctx, idmsName, metav1.DeleteOptions{}); delErr == nil {
+			if _, getErr := configClient.ImageDigestMirrorSets().Get(cleanupCtx, idmsName, metav1.GetOptions{}); getErr == nil {
+				if delErr := configClient.ImageDigestMirrorSets().Delete(cleanupCtx, idmsName, metav1.DeleteOptions{}); delErr == nil {
 					e2e.Logf("Cleanup: deleted IDMS %s", idmsName)
 					toDelete = true
 				} else {
@@ -412,7 +423,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		pool.waitForRollout(initialSpec)
 		e2e.Logf("Custom MCP %s rollout complete after ICSP creation", pool.PoolName)
 
-		registriesConf := pool.readRegistriesConf()
+		registriesConf := pool.readRegistriesConf(ctx)
 		e2e.Logf("registries.conf after ICSP creation: read %d bytes, asserting expected entries", len(registriesConf))
 
 		o.Expect(registriesConf).To(o.ContainSubstring(`location = "registry.access.redhat.com/ubi8/ubi-minimal"`),
@@ -476,7 +487,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("Confirmed: custom MCP %s stable for 2 minutes after ICSP deletion", pool.PoolName)
 
 		g.By("Step 5: Verify registries.conf is unchanged after ICSP deletion (IDMS maintains same mirror config)")
-		registriesConfAfterICSPDelete := pool.readRegistriesConf()
+		registriesConfAfterICSPDelete := pool.readRegistriesConf(ctx)
 		o.Expect(registriesConfAfterICSPDelete).To(o.Equal(registriesConf),
 			"registries.conf should be unchanged after ICSP deletion when IDMS covers the same mirror config")
 		e2e.Logf("Confirmed: registries.conf unchanged after ICSP deletion")
@@ -509,7 +520,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("Custom MCP %s rollout complete after ITMS creation", pool.PoolName)
 
 		g.By("Step 7: Verify registries.conf updated with ITMS tag-only entries alongside IDMS digest entries")
-		registriesConfAfterITMS := pool.readRegistriesConf()
+		registriesConfAfterITMS := pool.readRegistriesConf(ctx)
 		e2e.Logf("registries.conf after ITMS creation: read %d bytes, asserting expected entries", len(registriesConfAfterITMS))
 
 		o.Expect(registriesConfAfterITMS).To(o.ContainSubstring(`location = "registry.access.redhat.com/ubi9/ubi-minimal"`),
@@ -549,7 +560,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("Custom MCP %s rollout complete after second ICSP creation", pool.PoolName)
 
 		g.By("Step 9: Verify registries.conf updated with ICSP2 entries alongside IDMS and ITMS entries")
-		registriesConfAfterICSP2 := pool.readRegistriesConf()
+		registriesConfAfterICSP2 := pool.readRegistriesConf(ctx)
 		e2e.Logf("registries.conf after second ICSP creation: read %d bytes, asserting expected entries", len(registriesConfAfterICSP2))
 
 		o.Expect(registriesConfAfterICSP2).To(o.ContainSubstring(`location = "registry.example.com/example/myimage"`),
@@ -571,7 +582,7 @@ var _ = g.Describe("[sig-node][Suite:openshift/disruptive-longrunning][Disruptiv
 		e2e.Logf("Custom MCP %s rollout complete after IDMS deletion", pool.PoolName)
 
 		g.By("Step 11: Verify registries.conf - IDMS entries removed, ITMS and ICSP2 entries remain")
-		registriesConfAfterIDMSDelete := pool.readRegistriesConf()
+		registriesConfAfterIDMSDelete := pool.readRegistriesConf(ctx)
 		e2e.Logf("registries.conf after IDMS deletion: read %d bytes, asserting expected entries", len(registriesConfAfterIDMSDelete))
 
 		o.Expect(registriesConfAfterIDMSDelete).NotTo(o.ContainSubstring(`location = "registry.access.redhat.com/ubi8/ubi-minimal"`),

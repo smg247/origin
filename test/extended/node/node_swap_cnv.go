@@ -38,7 +38,7 @@ var (
 	cnvNoSwapConfigPath = exutil.FixturePath("testdata", "node", "cnv-swap", "kubelet-noswap-dropin.yaml")
 )
 
-var _ = g.Describe("[Jira:Node/Kubelet][sig-node][Feature:NodeSwap][Serial][Disruptive][Suite:openshift/disruptive-longrunning] Kubelet LimitedSwap Drop-in Configuration for CNV", g.Ordered, func() {
+var _ = g.Describe("[Jira:Node/Kubelet][sig-node][Serial][Disruptive][Suite:openshift/disruptive-longrunning] Kubelet LimitedSwap Drop-in Configuration for CNV", g.Ordered, func() {
 	defer g.GinkgoRecover()
 
 	var oc = exutil.NewCLI("cnv-swap")

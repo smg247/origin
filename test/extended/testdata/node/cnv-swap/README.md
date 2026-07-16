@@ -71,26 +71,24 @@ The configuration files support the following automated tests in `node_swap_cnv.
 
 | TC | Description |
 |----|-------------|
-| TC1 | Verify silent creation and ownership of drop-in directory on CNV nodes |
+| TC1 | Verify drop-in directory exists on all nodes with correct ownership |
 | TC2 | Verify kubelet starts normally with empty directory |
 | TC3 | Apply LimitedSwap configuration from drop-in file |
 | TC4 | Revert to NoSwap when drop-in file is removed |
-| TC5 | Verify control plane kubelets ignore drop-in config |
-| TC6 | Verify drop-in directory is auto-recreated after deletion |
-| TC7 | Validate security and permissions of drop-in directory |
-| TC8 | Verify cluster stability with LimitedSwap enabled |
-| TC9 | Verify non-CNV workers have no swap configuration |
-| TC10 | Apply correct precedence with multiple files |
-| TC11 | Maintain consistent configuration with checksum verification across CNV nodes |
-| TC12 | Handle LimitedSwap config gracefully when OS swap is disabled |
-| TC13 | Work correctly with various swap sizes |
-| TC14 | Expose swap metrics correctly via Prometheus |
+| TC5 | Validate security and permissions of drop-in directory |
+| TC6 | Verify cluster stability with LimitedSwap enabled |
+| TC7 | Verify non-CNV workers have no swap configuration |
+| TC8 | Apply correct precedence with multiple files |
+| TC9 | Maintain consistent configuration with checksum verification across CNV nodes |
+| TC10 | Handle LimitedSwap config gracefully when OS swap is disabled |
+| TC11 | Work correctly with various swap sizes |
+| TC12 | Expose swap metrics correctly via Prometheus |
 
 ## Running Tests
 
 ```bash
 # Run individual test
-./openshift-tests run-test "[Jira:Node/Kubelet][sig-node][Feature:NodeSwap][Serial][Disruptive][Suite:openshift/nodes/cnv] Kubelet LimitedSwap Drop-in Configuration for CNV TC1: should verify silent creation and ownership of drop-in directory on CNV nodes"
+./openshift-tests run-test "[Jira:Node/Kubelet][sig-node][Serial][Disruptive][Suite:openshift/disruptive-longrunning] Kubelet LimitedSwap Drop-in Configuration for CNV TC1: should verify drop-in directory exists on all nodes with correct ownership"
 
 # Run entire suite
 ./openshift-tests run openshift/nodes/cnv

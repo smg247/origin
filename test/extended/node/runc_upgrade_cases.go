@@ -115,7 +115,7 @@ var _ = g.Describe("[Suite:openshift/disruptive-longrunning][sig-node][Serial][D
 
 		g.By("Recovering pool by setting osImageStream back to rhel-9")
 		o.Expect(setPoolOSImageStream(ctx, mcClient, runcRHCOS10GuardPool, streamRHEL9)).To(o.Succeed())
-		o.Expect(waitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 10*time.Minute, WaitMCPAllowDegraded())).To(o.Succeed())
+		o.Expect(WaitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 10*time.Minute, WaitMCPAllowDegraded())).To(o.Succeed())
 
 		g.By("Verifying cluster upgradeability recovers after pool returns to rhel-9")
 		// MCO may take up to ~30 minutes to propagate Upgradeable after RenderDegraded clears.
@@ -146,11 +146,11 @@ var _ = g.Describe("[Suite:openshift/disruptive-longrunning][sig-node][Serial][D
 			o.Expect(setPoolOSImageStream(ctx, mcClient, runcRHCOS10GuardPool, streamRHEL10)).To(o.Succeed())
 			o.Expect(waitForNodeRHELMajorVersion(ctx, oc, nodeName, "10", 45*time.Minute)).To(o.Succeed(),
 				"node should reboot onto RHCOS 10 after rhel-10 stream change without runc")
-			o.Expect(waitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 30*time.Minute)).To(o.Succeed())
+			o.Expect(WaitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 30*time.Minute)).To(o.Succeed())
 
 			g.By("Verifying node rolled out to RHCOS 10 with crun")
 			o.Expect(verifyNodeReadyAndNotRollingOut(ctx, oc, nodeName)).To(o.Succeed())
-			o.Expect(assertCrunRuntimeOnNode(oc, nodeName)).To(o.Succeed(), "node should use crun after runc config is removed")
+			o.Expect(assertCrunRuntimeOnNode(ctx, oc, nodeName)).To(o.Succeed(), "node should use crun after runc config is removed")
 		}
 	})
 
@@ -166,7 +166,7 @@ var _ = g.Describe("[Suite:openshift/disruptive-longrunning][sig-node][Serial][D
 			framework.Logf("cleanup: failed to delete ContainerRuntimeConfig %s: %v", runcGuardCRCName, err)
 		}
 		if nodeName != "" {
-			if err := waitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 10*time.Minute, WaitMCPWithMachineCount(0)); err != nil {
+			if err := WaitForMCP(ctx, mcClient, runcRHCOS10GuardPool, 10*time.Minute, WaitMCPWithMachineCount(0)); err != nil {
 				framework.Logf("cleanup: failed waiting for MCP %s machine count 0: %v", runcRHCOS10GuardPool, err)
 			}
 			if err := waitForNodeWorkerConfigRollback(ctx, oc, nodeName, runcRHCOS10GuardPool, 15*time.Minute); err != nil {
@@ -177,7 +177,7 @@ var _ = g.Describe("[Suite:openshift/disruptive-longrunning][sig-node][Serial][D
 			framework.Logf("cleanup: failed to delete MachineConfigPool %s: %v", runcRHCOS10GuardPool, err)
 		}
 		if nodeName != "" {
-			if err := waitForMCP(ctx, mcClient, "worker", 30*time.Minute); err != nil {
+			if err := WaitForMCP(ctx, mcClient, "worker", 30*time.Minute); err != nil {
 				framework.Logf("cleanup: failed waiting for worker MCP to become ready: %v", err)
 			}
 		}
@@ -565,6 +565,9 @@ func labelFirstPureWorker(ctx context.Context, oc *exutil.CLI, poolName string) 
 	if err != nil {
 		return "", err
 	}
+	if len(workers) == 0 {
+		return "", fmt.Errorf("no pure worker nodes without custom roles available")
+	}
 
 	node := workers[0]
 	label := poolNodeRoleLabel(poolName)
@@ -635,10 +638,10 @@ func waitForMCPRenderDegraded(ctx context.Context, mcClient *machineconfigclient
 	})
 }
 
-func hasRuncRuntimeOnNode(oc *exutil.CLI, nodeName string) (bool, error) {
+func hasRuncRuntimeOnNode(ctx context.Context, oc *exutil.CLI, nodeName string) (bool, error) {
 	// Use a shell guard so missing drop-ins do not make oc debug exit non-zero (which spams test logs).
 	readDropIn := fmt.Sprintf("if [ -f %q ]; then grep default_runtime %q; fi", runcCRCDefaultRuntimePath, runcCRCDefaultRuntimePath)
-	out, err := ExecOnNodeWithChroot(oc, nodeName, "sh", "-c", readDropIn)
+	out, err := ExecOnNodeWithChroot(ctx, oc, nodeName, "sh", "-c", readDropIn)
 	if err != nil {
 		if isTransientNodeDebugError(err) {
 			return false, err
@@ -650,7 +653,7 @@ func hasRuncRuntimeOnNode(oc *exutil.CLI, nodeName string) (bool, error) {
 
 func expectRuncRuntimeOnNode(ctx context.Context, oc *exutil.CLI, nodeName string, timeout time.Duration) error {
 	err := wait.PollUntilContextTimeout(ctx, 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		hasRunc, err := hasRuncRuntimeOnNode(oc, nodeName)
+		hasRunc, err := hasRuncRuntimeOnNode(ctx, oc, nodeName)
 		if err != nil {
 			if isTransientNodeDebugError(err) {
 				framework.Logf("Transient debug error checking runc on node %s: %v", nodeName, err)
@@ -741,7 +744,7 @@ func waitForRuncRemovedFromNode(ctx context.Context, oc *exutil.CLI, nodeName st
 			framework.Logf("Node %s is unschedulable while waiting for runc removal", nodeName)
 		}
 
-		hasRunc, err := hasRuncRuntimeOnNode(oc, nodeName)
+		hasRunc, err := hasRuncRuntimeOnNode(ctx, oc, nodeName)
 		if err != nil {
 			if isTransientNodeDebugError(err) {
 				framework.Logf("Node %s debug unavailable during runc removal rollout, retrying: %v", nodeName, err)
@@ -803,8 +806,8 @@ func waitForNodeRHELMajorVersion(ctx context.Context, oc *exutil.CLI, nodeName, 
 	})
 }
 
-func assertCrunRuntimeOnNode(oc *exutil.CLI, nodeName string) error {
-	hasRunc, err := hasRuncRuntimeOnNode(oc, nodeName)
+func assertCrunRuntimeOnNode(ctx context.Context, oc *exutil.CLI, nodeName string) error {
+	hasRunc, err := hasRuncRuntimeOnNode(ctx, oc, nodeName)
 	if err != nil {
 		if isTransientNodeDebugError(err) {
 			return fmt.Errorf("failed to verify runtime on node %s: debug unavailable: %w", nodeName, err)
